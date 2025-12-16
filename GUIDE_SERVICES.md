@@ -79,5 +79,5 @@ Ce flux garantit une **séparation claire des responsabilités** :
 *   Le **Controller** gère les interactions avec l'utilisateur.
 *   Le **Service** orchestre la logique métier et la validation.
 *   Le **Repository** gère la communication avec la base de données.
-*   <img width="2752" height="1536" alt="image" src="https://github.com/user-attachments/assets/d8546c8b-781d-45b9-ad80-2390f52dabd6" />
+   <img width="2752" height="1536" alt="image" src="https://github.com/user-attachments/assets/d8546c8b-781d-45b9-ad80-2390f52dabd6" />
 
