@@ -1,86 +1,81 @@
-# Guide de Création des Services et des Tests
+# Flux de Fonctionnement d'un Service : Exemple avec `PatientService`
 
-Ce guide a pour but de détailler la structure et la logique derrière la création des services et de leurs tests unitaires dans l'application WhiteLab.
+Le flux peut être décomposé en plusieurs étapes claires, depuis l'interface utilisateur jusqu'à la base de données.
 
-## 1. Services
+```mermaid
+sequenceDiagram
+    participant UI as Interface Utilisateur (ou Controller)
+    participant Service as PatientServiceImpl
+    participant Repository as PatientRepositoryImpl
+    participant DB as Base de Données
 
-L'architecture des services est basée sur le principe d'inversion de contrôle (IoC) et d'injection de dépendances (DI). Chaque module de service est séparé en une interface (API) et une implémentation.
+    UI->>Service: appeler `enregistrerNouveauPatient(patientData)`
+    Note over Service: 1. Début de la transaction
 
--   **Interfaces (API)** : Situées dans les packages `api`, elles définissent le contrat du service, c'est-à-dire les méthodes publiques qui seront exposées au reste de l'application (contrôleurs, autres services, etc.).
--   **Implémentations** : Situées dans les packages `impl`, elles contiennent la logique métier concrète pour chaque méthode définie dans l'interface. Elles interagissent avec les *repositories* pour accéder à la base de données.
+    Service->>Service: 2. Validation des données (patientData)
+    alt Données Invalides
+        Service-->>UI: Lancer `ValidationException`
+    end
 
-### 1.1. Services du dossier `patient`
+    Note over Service: 3. Conversion du DTO en Entité
+    Service->>Repository: 4. appeler `create(patientEntity)`
 
-Ce module gère toute la logique liée aux patients et à leurs antécédents.
+    Repository->>DB: 5. Exécuter la requête SQL (INSERT INTO patient ...)
+    DB-->>Repository: 6. Retourner le résultat (ex: ID du nouveau patient)
+    
+    alt Erreur SQL
+        DB-->>Repository: Erreur (ex: contrainte violée)
+        Repository-->>Service: Lancer `DaoException`
+        Service-->>UI: Lancer `ServiceException`
+    end
 
--   `AntecedentService` :
-    -   **Objectif** : Gérer les opérations CRUD (Créer, Lire, Mettre à jour, Supprimer) pour les antécédents médicaux (ex: Asthme, Diabète).
-    -   **Méthodes clés** : `enregistrerAntecedent`, `modifierAntecedent`, `supprimerAntecedent`, `rechercherAntecedentParNom`.
-    -   **Logique de validation** : S'assure qu'un antécédent a un nom et que ce nom est unique avant de l'enregistrer.
+    Repository-->>Service: 7. Retourner l'entité sauvegardée (avec ID)
+    Note over Service: 8. Logique additionnelle (ex: log, notification)
 
--   `PatientService` :
-    -   **Objectif** : Gérer les informations de base des patients.
-    -   **Méthodes clés** : `enregistrerNouveauPatient`, `mettreAJourInfosPatient`, `rechercherPatientParId`, `listerTousLesPatients`.
-    -   **Logique de validation** : Valide les informations essentielles comme le nom, le prénom, la date de naissance, etc.
+    Service-->>UI: 9. Retourner le résultat (ex: PatientDTO)
+```
 
--   `PatientRechercheAvanceeService` :
-    -   **Objectif** : Fournir des fonctionnalités de recherche complexes pour les patients, basées sur plusieurs critères (âge, sexe, antécédents, etc.).
-    -   **Méthodes clés** : `rechercherPatients(criteres)`.
+### Explication des Étapes :
 
--   `PatientStatistiquesService` :
-    -   **Objectif** : Calculer et fournir des statistiques sur les patients (ex: répartition par âge, par sexe).
-    -   **Méthodes clés** : `getStatistiquesAge()`, `getStatistiquesSexe()`.
+1.  **Appel Initial (Couche de Présentation)**
+    *   Tout commence par une action de l'utilisateur, par exemple, remplir un formulaire et cliquer sur "Enregistrer".
+    *   Le **Controller** (ou la vue) collecte les données du formulaire et appelle la méthode correspondante du service : `patientService.enregistrerNouveauPatient(donneesDuFormulaire)`.
 
-### 1.2. Services du dossier `notifications`
+2.  **Validation (Dans le Service)**
+    *   La première chose que fait le service est de **valider les données** reçues.
+    *   Il vérifie si les champs obligatoires sont présents (nom, prénom), si les formats sont corrects (email), et si les règles métier sont respectées (par exemple, l'adresse email ne doit pas déjà exister).
+    *   Si la validation échoue, le service lève une `ValidationException` avec un message clair. Cette exception est "attrapée" par le controller, qui affiche un message d'erreur à l'utilisateur.
 
-Ce module est responsable de la gestion des notifications pour les utilisateurs de l'application.
+3.  **Préparation des Données**
+    *   Si la validation réussit, le service convertit l'objet de transfert de données (DTO - `PatientDTO`) en une entité de base de données (`Patient`). C'est l'entité qui sera mappée aux colonnes de la table.
 
--   `NotificationService` :
-    -   **Objectif** : Créer, lire et gérer le cycle de vie des notifications.
-    -   **Méthodes clés** : `creerNotification`, `marquerCommeLu`, `getNotificationsPourUtilisateur`, `supprimerNotification`.
-    -   **Logique** : Associe les notifications à des utilisateurs spécifiques et gère leur état (lu/non lu).
+4.  **Interaction avec le Repository**
+    *   Le service ne parle jamais directement à la base de données. Il délègue cette tâche au **Repository**.
+    *   Il appelle la méthode `patientRepository.create(patientEntity)`.
 
-### 1.3. Services du dossier `dossierMedicale`
+5.  **Exécution de la Requête (Dans le Repository)**
+    *   Le `PatientRepositoryImpl` contient le code JDBC (ou JPA/Hibernate) nécessaire.
+    *   Il génère une requête SQL `INSERT INTO patient ...` à partir de l'objet `patientEntity`.
+    *   Il exécute cette requête sur la base de données.
 
-Ce module gère les aspects médicaux du dossier d'un patient, comme les consultations et les certificats.
+6.  **Opération en Base de Données**
+    *   La base de données insère la nouvelle ligne dans la table `patient`. Si l'opération réussit, elle peut retourner l'ID auto-généré.
+    *   En cas de problème (ex: violation d'une clé étrangère), la base de données retourne une erreur SQL.
 
--   `ConsultationService` :
-    -   **Objectif** : Gérer les consultations médicales.
-    -   **Méthodes clés** : `planifierConsultation`, `demarrerConsultation`, `terminerConsultation`, `annulerConsultation`, `getConsultationParId`.
-    -   **Logique de validation** : S'assure qu'une consultation est liée à un patient et à un médecin, et gère les statuts (planifiée, en cours, terminée, annulée).
+7.  **Retour au Service**
+    *   Le repository "attrape" une éventuelle `SQLException` et l'encapsule dans une `DaoException` (une exception propre à la couche d'accès aux données) avant de la relancer.
+    *   Si tout s'est bien passé, le repository retourne l'entité sauvegardée (maintenant avec un ID) au service.
 
--   `CertificatService` :
-    -   **Objectif** : Créer et gérer les certificats médicaux générés lors d'une consultation.
-    -   **Méthodes clés** : `genererCertificat`, `getCertificatParId`, `listerCertificatsParPatient`.
-    -   **Logique de validation** : Vérifie qu'un certificat est bien associé à une consultation existante.
+8.  **Logique Finale (Dans le Service)**
+    *   Le service peut maintenant effectuer des tâches supplémentaires, comme enregistrer un log ("Le patient X a été créé") ou créer une notification pour les administrateurs.
+    *   S'il a reçu une `DaoException`, il peut la "traduire" en une `ServiceException` plus générale avant de la relancer.
 
-## 2. Tests des Services (`service/test`)
+9.  **Réponse à l'UI**
+    *   Finalement, le service retourne un DTO du patient nouvellement créé au controller.
+    *   Le controller utilise ce DTO pour mettre à jour l'interface utilisateur, par exemple en affichant un message de succès et en redirigeant l'utilisateur vers la liste des patients.
 
-Les tests unitaires pour les services sont cruciaux pour garantir que la logique métier fonctionne comme prévu, qu'elle gère correctement les cas d'erreur et qu'elle est robuste.
+Ce flux garantit une **séparation claire des responsabilités** :
 
-### Approche Générale des Tests
-
-1.  **Initialisation** : Avant chaque scénario de test, on initialise les *repositories* et les services nécessaires. Souvent, on utilise des *mocks* (simulacres) pour les dépendances (comme les repositories) afin d'isoler le service testé. Cependant, dans ce projet, les tests interagissent avec une base de données de test réelle pour garantir une intégration correcte.
-2.  **Préparation des données** (`preparerDonneesDeTest`) : On insère des données de test dans la base de données (ex: un patient, un médecin) pour créer un contexte de test réaliste.
-3.  **Exécution des scénarios** : Chaque méthode publique du service est testée à travers plusieurs scénarios :
-    -   **Cas nominal** : Le fonctionnement attendu (ex: enregistrer un patient avec des données valides).
-    -   **Cas d'erreur** : Comportement en cas de données invalides (ex: enregistrer un patient sans nom). On vérifie que les bonnes exceptions (`ValidationException`, `ServiceException`) sont levées.
-    -   **Cas limites** : Comportement avec des données "étranges" (ex: chaînes vides, `null`).
-4.  **Nettoyage** (`nettoyerDonneesDeTest`) : Après l'exécution des tests, toutes les données créées sont supprimées de la base de données pour ne pas polluer les tests suivants.
-
-### Exemples de fichiers de test
-
--   `AntecedentServiceTest.java` :
-    -   **Scénario 1** : Teste l'enregistrement réussi d'un nouvel antécédent.
-    -   **Scénario 2** : Vérifie qu'une exception est levée si on essaie d'enregistrer un antécédent avec un nom `null` ou vide.
-    -   **Scénario 3** : Vérifie qu'il est impossible d'ajouter un antécédent qui existe déjà.
-    -   **Scénario 4 & 5** : Teste la modification et la suppression d'un antécédent.
-
--   `CertificatServiceTest.java` :
-    -   **Pré-requis** : Ce test est plus complexe car la création d'un certificat dépend de l'existence d'un patient, d'un médecin et d'une consultation. La méthode `preparerDonneesDeTest` est donc plus longue.
-    -   **Scénario 1** : Teste la génération réussie d'un certificat pour une consultation valide.
-    -   **Scénario 2** : Vérifie qu'une exception est levée si on essaie de créer un certificat sans description.
-    -   **Scénario 3** : Tente de générer un certificat pour une consultation qui n'existe pas.
-
--   `ConsultationServiceTest.java` :
-    -   **Scénarios** : Teste la création, la mise à jour du statut (en cours, terminée), et l'annulation d'une consultation, en vérifiant que les contraintes (patient et médecin existants) sont respectées.
+*   Le **Controller** gère les interactions avec l'utilisateur.
+*   Le **Service** orchestre la logique métier et la validation.
+*   Le **Repository** gère la communication avec la base de données.
